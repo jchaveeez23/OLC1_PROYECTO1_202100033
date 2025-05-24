@@ -1,0 +1,286 @@
+package cup;
+import java_cup.runtime.Symbol;
+import errors.TokenError;
+import errors.ErrorHandler;
+import interpret.contexts.*;
+import interpret.contracts.*;
+import interpret.match.*;
+import interpret.nodos.*;
+import interpret.random.*;
+import interpret.nodos.conditionals.*;
+import interpret.nodos.functions.*;
+import interpret.nodos.states.*;
+import interpret.nodos.types.*;
+import java.util.List;
+import java.util.ArrayList;
+
+class Parser;
+
+parser code {:
+    private ErrorHandler errorHandler = ErrorHandler.getInstance();
+
+public void syntax_error(Symbol s) {
+        TokenError error = new TokenError(
+            "Sintáctico",
+            s.left,
+            s.right,
+            String.valueOf(s.value),
+            "Error sintáctico",
+            "No se esperaba este componente: " + s.value,
+            "Parser.cup"
+        );
+        errorHandler.addError(error);
+    }
+
+    public void unrecovered_syntax_error(Symbol s) throws java.lang.Exception {
+        TokenError error = new TokenError(
+            "Léxico",
+            s.left,
+            s.right,
+            String.valueOf(s.value),
+            "Error léxico",
+            "Componente no reconocido: " + s.value,
+            "Parser.cup"
+        );
+        errorHandler.addError(error);
+    }
+
+:}
+
+terminal String STRATEGY;
+terminal MATCH, MAIN, INITIAL, RULES, IF, THEN, ELSE, SCORING, RUN, WITH, SEED;
+terminal PLAYERS, STRATEGIES, ROUNDS, MUTUAL, COOPERATION, DEFECTION, BETRAYAL, REWARD, PUNISHMENT;
+
+terminal String C, D, TRUE, FALSE;
+
+terminal AND, OR, NOT;
+terminal EQ, NEQ, GE, LE, GT, LT;
+
+terminal LBRACE, RBRACE, LPAREN, RPAREN, LBRACKET, RBRACKET;
+terminal COLON, COMMA;
+
+terminal ROUND_NUMBER, RANDOM, TOTAL_ROUNDS;
+terminal OPPONENT_HISTORY, SELF_HISTORY;
+
+terminal GET_MOVE, LAST_MOVE, GET_MOVES_COUNT, GET_LAST_N_MOVES;
+
+terminal String ID, FLOATLIT, INTLIT;
+
+non terminal Expression Program;
+non terminal List<Expression> StrategiesSection, MatchesSection;
+non terminal Expression MatchBody, MainSection, StrategyBody;
+non terminal List<String> IdList;
+non terminal List<NodeRun> RunList;
+non terminal List<NodoRule> RuleList;
+non terminal NodoRule Rule;
+non terminal Expression Condition, SystemInteger;
+non terminal Scoring Scoring;
+non terminal Expression FunctionGetMove, FunctionLastMove;
+non terminal Expression FunctionGetMovesCount, FunctionGetLastNMoves;
+non terminal Expression Action, SystemAction, SystemListAction;
+non terminal List<Expression> ListAction;
+non terminal Expression BOOL, Factor, FactorNot, Comparison, Term;
+
+precedence left OR;
+precedence left AND;
+precedence left EQ, NEQ;
+precedence left GT, LT, GE, LE;
+precedence right NOT;
+
+start with Program;
+
+Program ::= StrategiesSection:s MatchesSection:m MainSection:ms
+    {: RESULT = new NodoProgram(s, m, ms); :};
+
+StrategiesSection ::= StrategyBody:s
+    {:
+        List<Expression> strategies = new ArrayList<>();
+        strategies.add(s);
+        RESULT = strategies;
+    :}
+    | StrategiesSection:s StrategyBody:b
+    {:
+        s.add(b);
+        RESULT = s;
+    :};
+
+StrategyBody ::= STRATEGY ID:id LBRACE INITIAL COLON Action:a RULES COLON LBRACKET RuleList:r RBRACKET RBRACE
+    {: RESULT = new NodoStrategy(id, a, r); :};
+
+Action ::= C:cooperation
+    {: RESULT = new NodoAction(cooperation); :}
+    | D:defection
+    {: RESULT = new NodoAction(defection); :};
+
+SystemAction ::= Action:action
+    {: RESULT = action; :}
+    | FunctionGetMove:action
+    {: RESULT = action; :}
+    | FunctionLastMove:action
+    {: RESULT = action; :}
+    | FunctionGetMovesCount:action
+    {: RESULT = action; :};
+
+ListAction ::= SystemAction:sA
+    {:
+        List<Expression> actions = new ArrayList<>();
+        actions.add(sA);
+        RESULT = actions;
+    :}
+    | ListAction:lA COMMA SystemAction:sA
+    {:
+        lA.add(sA);
+        RESULT = lA;
+    :};
+
+SystemListAction ::= LBRACKET ListAction:lA RBRACKET
+    {: RESULT = new NodoActionList(lA); :}
+    | OPPONENT_HISTORY:oH
+    {: RESULT = new NodoOpponentHistory(); :}
+    | SELF_HISTORY :sH
+    {: RESULT = new NodoSelfHistory(); :}
+    | FunctionGetLastNMoves:fG
+    {: RESULT = fG; :}
+    ;
+
+Rule ::= IF Condition:c THEN SystemAction:sA
+    {:
+        RESULT = new NodoRule(c, sA);
+    :}
+    | ELSE SystemAction:sA
+    {:
+        RESULT = new NodoRule(null, sA);
+    :};
+
+RuleList ::= Rule:r
+    {:
+        List<NodoRule> rules = new ArrayList<>();
+        rules.add(r);
+        RESULT = rules;
+    :}
+    | RuleList:rl COMMA Rule:r
+    {:
+        rl.add(r);
+        RESULT = rl;
+    :};
+
+SystemInteger ::= INTLIT:int1
+    {: RESULT = new NodoInt(Integer.parseInt(int1)); :}
+    | FunctionGetMovesCount:int2
+    {: RESULT = int2; :}
+    | ROUND_NUMBER:int3
+    {: RESULT = new NodoRoundNumber(); :}
+    | TOTAL_ROUNDS:int3
+    {: RESULT = new NodoTotalRounds(); :}
+    | RANDOM:int4
+    {: RESULT = new NodoRandom(); :};
+
+BOOL ::= TRUE
+    {: RESULT = new NodoBoolean(true); :}
+    | FALSE
+    {: RESULT = new NodoBoolean(false); :};
+
+Factor ::= SystemListAction:sA
+    {: RESULT = sA; :}
+    | FLOATLIT:fL
+    {: RESULT = new NodoFloat(Float.parseFloat(fL)); :}
+    | SystemInteger:sI
+    {: RESULT = sI; :}
+    | BOOL:b
+    {: RESULT = b; :};
+
+FactorNot ::= Factor:f
+    {: RESULT = f; :}
+    | NOT Factor:f
+    {: RESULT = new NodoNot(f); :};
+
+Comparison ::= FactorNot:fN EQ FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.EQ); :}
+    | FactorNot:fN NEQ FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.NEQ); :}
+    | FactorNot:fN GE FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.GE); :}
+    | FactorNot:fN LE FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.LE); :}
+    | FactorNot:fN GT FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.GT); :}
+    | FactorNot:fN LT FactorNot:fN2
+    {: RESULT = new NodoComparison(fN, fN2, NodoComparison.Operator.LT); :}
+    | FactorNot:fN
+    {: RESULT = fN; :};
+
+Term ::= Comparison:c
+    {: RESULT = c; :}
+    | Term:t AND Comparison:c
+    {: RESULT = new NodoLogical(t, c, NodoLogical.Operator.AND); :}
+    | Term:t OR Comparison:c
+    {: RESULT = new NodoLogical(t, c, NodoLogical.Operator.OR); :};
+
+Condition ::= Term:t
+    {: RESULT = t; :};
+
+FunctionGetMove ::= GET_MOVE LPAREN SystemListAction:sA COMMA SystemInteger:sI RPAREN
+    {: RESULT = new NodoGetMove(sA, sI); :};
+
+FunctionLastMove ::= LAST_MOVE LPAREN SystemListAction:sLA RPAREN
+    {: RESULT = new NodoLastMove(sLA); :};
+
+FunctionGetMovesCount ::= GET_MOVES_COUNT LPAREN SystemListAction:sLA COMMA SystemAction:sA RPAREN
+    {: RESULT = new NodoGetMovesCount(sLA, sA); :};
+
+FunctionGetLastNMoves ::= GET_LAST_N_MOVES LPAREN SystemListAction:sLA COMMA SystemInteger:sI RPAREN
+    {: RESULT = new NodoGetLastNMoves(sLA, sI); :};
+
+MatchesSection ::= MatchBody:m
+    {:
+        List<Expression> matches = new ArrayList<>();
+        matches.add(m);
+        RESULT = matches;
+    :}
+    | MatchesSection:ms MatchBody:m
+    {:
+        ms.add(m);
+        RESULT = ms;
+    :};
+
+
+MatchBody ::= MATCH ID:id LBRACE
+    PLAYERS STRATEGIES COLON LBRACKET ID:id2 COMMA ID:id3 RBRACKET
+    ROUNDS COLON INTLIT:int1
+    SCORING COLON LBRACE Scoring:s RBRACE
+    RBRACE
+    {: RESULT = new NodoMatch(id, id2, id3, Integer.parseInt(int1), s); :};
+
+Scoring ::= MUTUAL COOPERATION COLON INTLIT:int1 COMMA
+    MUTUAL DEFECTION COLON INTLIT:int2 COMMA
+    BETRAYAL REWARD COLON INTLIT:int3 COMMA
+    BETRAYAL PUNISHMENT COLON INTLIT:int4
+    {: RESULT = new Scoring(Integer.parseInt(int1), Integer.parseInt(int2), Integer.parseInt(int3), Integer.parseInt(int4)); :};
+
+MainSection ::= MAIN LBRACE RunList:rl RBRACE
+    {: RESULT = new NodoMain(rl); :};
+
+
+RunList ::= RUN LBRACKET IdList:iL RBRACKET WITH LBRACE SEED COLON INTLIT:int1 RBRACE
+    {:
+        List<NodeRun> runs = new ArrayList<>();
+        runs.add(new NodeRun(iL, Long.parseLong(int1)));
+        RESULT = runs;
+    :}
+    | RunList:rL RUN LBRACKET IdList:iL RBRACKET WITH LBRACE SEED COLON INTLIT:int1 RBRACE
+    {:
+        rL.add(new NodeRun(iL, Long.parseLong(int1)));
+        RESULT = rL;
+    :};
+
+IdList ::= ID:id
+    {:
+        List<String> ids = new ArrayList<>();
+        ids.add(id);
+        RESULT = ids;
+    :}
+    | IdList:iL COMMA ID:id
+    {:
+        iL.add(id);
+        RESULT = iL;
+    :};
